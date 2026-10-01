@@ -1,0 +1,4 @@
+,ROC_all,ROC_noCIG,PR_all,PR_noCIG
+Logistic Regression,0.8644,0.7891,0.555,0.1546
+Random Forest,0.8836,0.8178,0.6342,0.268
+Gradient Boosting,0.8959,0.8375,0.6345,0.2643

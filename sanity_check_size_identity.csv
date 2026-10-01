@@ -1,0 +1,5 @@
+,ROC_AUC,PR_AUC
+Stock-identity base rate (train decrease rate per stock),0.7661,0.1475
+Gradient Boosting: prev_users_holding only,0.8054,0.1997
+Gradient Boosting: top 3 features,0.8949,0.6275
+Gradient Boosting: all 7 features,0.8959,0.6345

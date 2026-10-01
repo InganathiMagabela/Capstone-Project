@@ -1,0 +1,77 @@
+{
+  "model_name": "Gradient Boosting",
+  "model_source": "portable",
+  "threshold": 0.567803414139159,
+  "test_start": "2019-11-12 14:08:25",
+  "test_rows": 59668,
+  "test_positive_rate": 0.06236173493329758,
+  "metrics": {
+    "Accuracy": 0.8558356237849434,
+    "Precision": 0.2713388925325588,
+    "Recall": 0.7782854071486159,
+    "F1": 0.4023898846741698,
+    "ROC_AUC": 0.895956808029629,
+    "PR_AUC": 0.6348911806257985
+  },
+  "confusion_matrix": [
+    [
+      48170,
+      7777
+    ],
+    [
+      825,
+      2896
+    ]
+  ],
+  "baselines": {
+    "always_0": {
+      "Accuracy": 0.9376382650667024,
+      "Precision": 0.0,
+      "Recall": 0.0,
+      "F1": 0.0,
+      "ROC_AUC": 0.5,
+      "PR_AUC": 0.06236173493329758
+    },
+    "persistence": {
+      "Accuracy": 0.9008178588187974,
+      "Precision": 0.20494225087295193,
+      "Recall": 0.20505240526740123,
+      "F1": 0.20499731327243417,
+      "ROC_AUC": 0.5760725947548152,
+      "PR_AUC": 0.09159821267099075
+    }
+  },
+  "metrics_excluding_CIG": {
+    "test_rows": 56421,
+    "positive_rate": 0.042076531787809505,
+    "ROC_AUC": 0.8375295884706045,
+    "PR_AUC": 0.26434859387103304
+  },
+  "classification_report": {
+    "Low risk": {
+      "precision": 0.9831615470966425,
+      "recall": 0.8609934402202084,
+      "f1-score": 0.9180309123134683,
+      "support": 55947.0
+    },
+    "High risk": {
+      "precision": 0.2713388925325588,
+      "recall": 0.7782854071486159,
+      "f1-score": 0.4023898846741698,
+      "support": 3721.0
+    },
+    "accuracy": 0.8558356237849434,
+    "macro avg": {
+      "precision": 0.6272502198146006,
+      "recall": 0.8196394236844122,
+      "f1-score": 0.660210398493819,
+      "support": 59668.0
+    },
+    "weighted avg": {
+      "precision": 0.9387710513932009,
+      "recall": 0.8558356237849434,
+      "f1-score": 0.8858746432270933,
+      "support": 59668.0
+    }
+  }
+}

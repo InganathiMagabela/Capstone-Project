@@ -1,0 +1,20 @@
+{
+  "Logistic Regression": {
+    "clf__C": 0.01,
+    "cv_pr_auc": 0.206771743123055
+  },
+  "Random Forest": {
+    "n_estimators": 100,
+    "min_samples_leaf": 50,
+    "max_features": "sqrt",
+    "max_depth": null,
+    "cv_pr_auc": 0.3473264092785288
+  },
+  "Gradient Boosting": {
+    "subsample": 1.0,
+    "n_estimators": 100,
+    "max_depth": 2,
+    "learning_rate": 0.1,
+    "cv_pr_auc": 0.33923407231219405
+  }
+}

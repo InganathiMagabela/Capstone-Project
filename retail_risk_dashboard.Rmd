@@ -1,0 +1,391 @@
+---
+title: "Retail Investor Financial-Risk Dashboard"
+output:
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    vertical_layout: scroll
+    theme: bootstrap
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+# Packages needed (install once):
+# install.packages(c("flexdashboard", "shiny", "dplyr", "ggplot2", "readr", "DT", "jsonlite"))
+library(flexdashboard)
+library(shiny)
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(DT)
+library(jsonlite)
+
+OUT_DIR    <- "outputs"                       # folder created by the Python notebook
+TEST_START <- as.POSIXct("2019-11-12 14:08:25", tz = "UTC")   # start of the out-of-sample test period
+
+scores  <- read_csv(file.path(OUT_DIR, "dashboard_scores.csv"), show_col_types = FALSE)
+quality <- read_csv(file.path(OUT_DIR, "dashboard_quality.csv"), show_col_types = FALSE)
+model   <- fromJSON(file.path(OUT_DIR, "model_export.json"), simplifyVector = FALSE)
+
+scores$timestamp <- as.POSIXct(scores$timestamp, tz = "UTC")
+scores <- scores %>% arrange(name, timestamp)
+stocks <- sort(unique(scores$name))
+THRESHOLD <- model$threshold
+FEATS <- unlist(model$features)
+
+# ---- portable model (exported from the Python notebook) --------------------------------
+walk_tree <- function(tr, x) {
+  node <- 1L
+  while (tr$left[node] != -1) {
+    f <- tr$feature[node] + 1L
+    if (x[f] <= tr$threshold[node]) node <- tr$left[node] + 1L else node <- tr$right[node] + 1L
+  }
+  tr$value[node]
+}
+
+prep_trees <- function(trees) {
+  lapply(trees, function(t) list(left = unlist(t$left), right = unlist(t$right),
+                                 feature = unlist(t$feature), threshold = unlist(t$threshold),
+                                 value = unlist(t$value)))
+}
+if (!is.null(model$trees)) model$trees <- prep_trees(model$trees)
+
+predict_prob <- function(x) {   # x: numeric vector in the order of model$features
+  if (model$type == "lr") {
+    z <- model$intercept + sum(unlist(model$coef) * (x - unlist(model$mean)) / unlist(model$scale))
+    return(1 / (1 + exp(-z)))
+  }
+  if (model$type == "rf") {
+    return(mean(vapply(model$trees, walk_tree, numeric(1), x = x)))
+  }
+  raw <- model$init + model$learning_rate * sum(vapply(model$trees, walk_tree, numeric(1), x = x))
+  1 / (1 + exp(-raw))
+}
+
+# Features at the LAST observation of a holder-count vector (same definitions as the notebook)
+last_features <- function(v) {
+  n   <- length(v)
+  chg <- c(NA, diff(v))
+  gr  <- chg / c(NA, v[-n])
+  gr[!is.finite(gr)] <- NA
+  c(prev_popularity_change = chg[n],
+    prev_growth_rate       = gr[n],
+    prev_rolling_avg       = mean(v[(n - 6):n]),
+    prev_momentum          = v[n] - v[n - 7],
+    prev_users_holding     = v[n],
+    down_count_7           = sum(chg[(n - 6):n] < 0),
+    growth_vol_7           = sd(gr[(n - 6):n]))
+}
+
+backtest <- function(d) {
+  x <- d %>% filter(!is.na(probability), !is.na(next_decrease))
+  if (nrow(x) == 0) return(NULL)
+  actual <- sum(x$next_decrease == 1)
+  alerts <- sum(x$alert == 1)
+  hits   <- sum(x$alert == 1 & x$next_decrease == 1)
+  list(n = nrow(x), actual = actual, alerts = alerts, hits = hits,
+       precision = ifelse(alerts > 0, hits / alerts, NA),
+       recall    = ifelse(actual > 0, hits / actual, NA),
+       base_rate = actual / nrow(x))
+}
+
+img_path <- function(fn) file.path(OUT_DIR, fn)
+img_render <- function(fn) {
+  renderImage({
+    validate(need(file.exists(img_path(fn)), paste(fn, "not found in the outputs folder - run the notebook first.")))
+    list(src = img_path(fn), contentType = "image/png", width = "100%")
+  }, deleteFile = FALSE)
+}
+```
+
+Stock view
+=====================================
+
+Column {.sidebar data-width=260}
+-------------------------------------
+
+```{r}
+selectInput("stock", "Stock", choices = stocks, selected = if ("ARKK" %in% stocks) "ARKK" else stocks[1])
+sliderInput("window", "Observations to display", min = 100, max = 3000, value = 500, step = 100)
+checkboxInput("oos", "Back-test on the out-of-sample test period only", value = TRUE)
+helpText("The model was trained on data before 12 Nov 2019. Scores before that date are in-sample and optimistic.")
+helpText(paste0("Model: ", model$model_name, " | decision threshold: ", round(THRESHOLD, 4)))
+```
+
+```{r}
+stock_data <- reactive({
+  scores %>% filter(name == input$stock) %>% arrange(timestamp)
+})
+```
+
+Row
+-------------------------------------
+
+### Latest holders
+
+```{r}
+renderValueBox({
+  d <- stock_data(); valueBox(format(tail(d$users_holding, 1), big.mark = ","), icon = "fa-users")
+})
+```
+
+### Probability of a decrease (next observation)
+
+```{r}
+renderValueBox({
+  p <- tail(stock_data()$probability, 1)
+  valueBox(ifelse(is.na(p), "n/a", paste0(round(100 * p, 1), "%")), icon = "fa-percent")
+})
+```
+
+### Risk label
+
+```{r}
+renderValueBox({
+  p <- tail(stock_data()$probability, 1)
+  lab <- ifelse(is.na(p), "Insufficient history", ifelse(p >= THRESHOLD, "High risk", "Low risk"))
+  valueBox(lab, icon = "fa-exclamation-triangle",
+           color = ifelse(lab == "High risk", "danger", ifelse(lab == "Low risk", "success", "warning")))
+})
+```
+
+### Last reading
+
+```{r}
+renderValueBox({
+  valueBox(format(tail(stock_data()$timestamp, 1), "%Y-%m-%d %H:%M"), icon = "fa-clock")
+})
+```
+
+Row
+-------------------------------------
+
+### Data-quality check
+
+```{r}
+renderUI({
+  q <- quality %>% filter(name == input$stock)
+  if (nrow(q) == 1 && q$data_quality_flag == 1) {
+    div(class = "alert alert-warning",
+        strong("Data-quality warning: "), q$flag_reason,
+        ". Predictions for this stock are not reliable.")
+  } else {
+    div(class = "alert alert-success", "No data-quality flags for this stock.")
+  }
+})
+```
+
+Row
+-------------------------------------
+
+### Holders over time
+
+```{r}
+renderPlot({
+  d <- tail(stock_data(), input$window)
+  ggplot(d, aes(timestamp, users_holding)) + geom_line() +
+    labs(x = NULL, y = "Users holding", title = paste(input$stock, ": holders")) + theme_minimal(base_size = 13)
+})
+```
+
+Row
+-------------------------------------
+
+### Predicted probability of a decrease at the next observation
+
+```{r}
+renderPlot({
+  d <- tail(stock_data(), input$window)
+  ggplot(d, aes(timestamp, probability)) + geom_line(colour = "steelblue") +
+    geom_hline(yintercept = THRESHOLD, colour = "red", linetype = "dashed") +
+    geom_point(data = filter(d, next_decrease == 1), aes(y = 0.02), size = 1) +
+    coord_cartesian(ylim = c(0, 1)) +
+    labs(x = NULL, y = "Probability",
+         subtitle = "Red dashed line = decision threshold; black dots = a decrease actually followed") +
+    theme_minimal(base_size = 13)
+})
+```
+
+Row
+-------------------------------------
+
+### Back-test for this stock
+
+```{r}
+renderTable({
+  d <- stock_data()
+  if (isTRUE(input$oos)) d <- d %>% filter(timestamp >= TEST_START)
+  b <- backtest(d)
+  if (is.null(b)) return(data.frame(Message = "No scored observations in the selected period."))
+  data.frame(Measure = c("Observations scored", "Actual decreases", "Base rate of decreases",
+                         "Alerts raised", "Alerts that were correct", "Precision", "Recall"),
+             Value = c(format(b$n, big.mark = ","), format(b$actual, big.mark = ","),
+                       sprintf("%.1f%%", 100 * b$base_rate), format(b$alerts, big.mark = ","),
+                       format(b$hits, big.mark = ","),
+                       ifelse(is.na(b$precision), "n/a", sprintf("%.2f", b$precision)),
+                       ifelse(is.na(b$recall), "n/a", sprintf("%.2f", b$recall))))
+})
+```
+
+Watchlist
+=====================================
+
+Row
+-------------------------------------
+
+### Latest risk signal for every stock (scores the most recent reading in the data file)
+
+```{r}
+watch <- scores %>%
+  group_by(name) %>% slice_tail(n = 1) %>% ungroup() %>%
+  left_join(quality %>% select(name, data_quality_flag, flag_reason), by = "name") %>%
+  transmute(Stock = name,
+            `Last reading` = format(timestamp, "%Y-%m-%d %H:%M"),
+            Holders = users_holding,
+            `Probability of decrease` = round(probability, 4),
+            Label = ifelse(is.na(probability), "Insufficient history", ifelse(probability >= THRESHOLD, "High risk", "Low risk")),
+            `Data-quality flag` = ifelse(data_quality_flag == 1, "FLAGGED", ""),
+            Reason = ifelse(is.na(flag_reason), "", flag_reason)) %>%
+  arrange(desc(`Probability of decrease`))
+
+DT::renderDataTable({
+  DT::datatable(watch, rownames = FALSE, options = list(pageLength = 15, scrollX = TRUE))
+})
+```
+
+Row
+-------------------------------------
+
+### Note
+
+The data end in February 2020, so these are historical illustrations, not live signals. A high probability
+means the model expects the number of holders to fall at the next observation. It is a proxy for financial
+risk, not a prediction of investor loss.
+
+Try your own data
+=====================================
+
+Column {.sidebar data-width=320}
+-------------------------------------
+
+```{r}
+textAreaInput("counts", "Holder counts (oldest first, at least 16, one stock)", rows = 8,
+              value = "1200, 1203, 1203, 1199, 1195, 1195, 1190, 1188, 1188, 1185, 1180, 1181, 1176, 1170, 1170, 1166, 1160")
+actionButton("go", "Predict")
+```
+
+Row
+-------------------------------------
+
+### Result
+
+```{r}
+result <- eventReactive(input$go, {
+  v <- suppressWarnings(as.numeric(strsplit(gsub("[,;\n\t]", " ", input$counts), " +")[[1]]))
+  v <- v[!is.na(v)]
+  if (length(v) < 16) stop(paste0("Please provide at least 16 consecutive observations (you gave ", length(v), ")."))
+  if (any(v < 0)) stop("Holder counts cannot be negative.")
+  f <- last_features(v)
+  if (any(is.na(f))) stop("Not enough valid history: the counts contain zeros or too little variation to compute all features.")
+  p <- predict_prob(as.numeric(f[FEATS]))
+  list(p = p, f = f)
+}, ignoreNULL = FALSE)
+
+renderUI({
+  r <- tryCatch(result(), error = function(e) e)
+  if (inherits(r, "error")) return(div(class = "alert alert-danger", conditionMessage(r)))
+  lab <- ifelse(r$p >= THRESHOLD, "High risk", "Low risk")
+  tagList(
+    h3(paste0("Probability of a decrease at the next observation: ", round(100 * r$p, 1), "%")),
+    h3(paste0("Risk label: ", lab)),
+    p("Features computed from the last observation:"),
+    tags$table(class = "table table-condensed", style = "width:auto;",
+      tags$tbody(lapply(names(r$f), function(n) tags$tr(tags$td(n), tags$td(round(r$f[[n]], 4))))))
+  )
+})
+```
+
+Model and results
+=====================================
+
+Row
+-------------------------------------
+
+### Model comparison on the test period
+
+```{r}
+DT::renderDataTable({
+  f <- file.path(OUT_DIR, "model_comparison_test.csv")
+  if (!file.exists(f)) return(DT::datatable(data.frame(Message = "model_comparison_test.csv not found")))
+  d <- read_csv(f, show_col_types = FALSE)
+  names(d)[1] <- "Model"
+  DT::datatable(d, rownames = FALSE, options = list(dom = "t"))
+})
+```
+
+Row
+-------------------------------------
+
+### Confusion matrices (test period)
+
+```{r}
+img_render("confusion_matrices.png")
+```
+
+### ROC and precision-recall curves
+
+```{r}
+img_render("roc_pr_curves.png")
+```
+
+Row
+-------------------------------------
+
+### Permutation importance
+
+```{r}
+img_render("permutation_importance.png")
+```
+
+### Effect of the CIG feed artifact
+
+```{r}
+DT::renderDataTable({
+  f <- file.path(OUT_DIR, "cig_sensitivity.csv")
+  if (!file.exists(f)) return(DT::datatable(data.frame(Message = "Run notebook section 11c to create cig_sensitivity.csv")))
+  d <- read_csv(f, show_col_types = FALSE); names(d)[1] <- "Setup"
+  DT::datatable(d, rownames = FALSE, options = list(dom = "t"))
+})
+```
+
+Row
+-------------------------------------
+
+### Caution
+
+Headline scores that include the stock CIG are inflated by a data-feed artifact (its holder count alternates
+between about 3 and about 3,500 every hour from around August 2019). The results without CIG are the more
+credible estimate of predictive ability.
+
+About and limitations
+=====================================
+
+Row
+-------------------------------------
+
+### What this dashboard does
+
+It shows the output of the model trained in the capstone notebook. For a chosen stock it displays the
+probability that the number of users holding the stock will **decrease at the next observation**, a risk label
+based on the decision threshold, and a back-test against what actually happened.
+
+**What the risk label means.** Risk = 1 when the number of users holding a stock decreased compared with the
+previous observation; Risk = 0 when it stayed the same or increased. This is a **proxy** for financial risk.
+The dataset has no prices, trades, returns or investor identities, so a High-risk label does not mean that any
+investor lost money.
+
+**Limitations.**
+
+* Aggregate holder counts for 31 Robinhood stocks, May 2018 to February 2020; not South African data.
+* One stock (CIG) shows an implausible hourly pattern that inflates scores; CIG and XOXO are flagged.
+* Observations are roughly hourly with irregular gaps, so "the next observation" is not always the next hour.
+* A prototype evaluated on one chronological test period. It is not investment advice and is not ready for deployment.

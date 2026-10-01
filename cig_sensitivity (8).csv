@@ -1,0 +1,4 @@
+,Test rows,Share of decreases,ROC_AUC,PR_AUC
+"Trained with CIG, tested on all stocks",59668.0,0.0624,0.8959,0.6345
+"Trained with CIG, tested without CIG",56421.0,0.0421,0.8375,0.2643
+"Trained without CIG, tested without CIG",56421.0,0.0421,0.838,0.2686
